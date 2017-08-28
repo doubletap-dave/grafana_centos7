@@ -34,7 +34,7 @@ check_ownership () {
 # Prerequisite package installer
 prereq_installer () {
 	yum install -y epel-release && yum update -y ;
-	yum install -y yum-utils evice-mapper-persistent-data lvm2 sshpass net-snmp net-snmp-devel.x86_64 net-snmp-utils.x86_64;
+	yum install -y yum-utils evice-mapper-persistent-data lvm2 sshpass net-snmp net-snmp-devel.x86_64 net-snmp-utils.x86_64 open-vm-tools;
 	clear;
 }
 
