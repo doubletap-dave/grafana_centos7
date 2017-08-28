@@ -163,29 +163,29 @@ docker_group_add () {
 install_docker () {
 	# FIRE THE LAZAAAAAAAAA
 	clear;
-	echo -e "\\e[36mPHASE 1: Installing prequisite packages";
+	echo -e "\\e[36mPHASE 1: Installing prerequisite packages";
 	prereq_installer > /dev/null 2>&1 >> dgc_install.log;
 	clear; 
 
-	echo -e "\\e[36mPHASE 1: Installing prequisite packages --------------------- COMPLETE\\e[0m";
+	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present)"
 	remove_old_docker > /dev/null 2>&1 >> dgc_install.log;
 	clear; 
 
-	echo -e "\\e[36mPHASE 1: Installing prequisite packages --------------------- COMPLETE\\e[0m";
+	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Adding Docker Repository"
 	add_docker_repo > /dev/null 2>&1 >> dgc_install.log;
 	clear; 
 
-	echo -e "\\e[36mPHASE 1: Installing prequisite packages --------------------- COMPLETE\\e[0m";
+	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Installing Docker"
 	docker_installer > /dev/null 2>&1 >> dgc_install.log;
 	clear; 
 
-	echo -e "\\e[36mPHASE 1: Installing prequisite packages --------------------- COMPLETE\\e[0m";
+	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Installing Docker ---------------------------------- COMPLETE\\e[0m";
@@ -193,7 +193,7 @@ install_docker () {
 	verify_docker > /dev/null 2>&1 >> dgc_install.log;
 	clear; 
 
-	echo -e ": Installing prequisite packages --------------------- COMPLETE\\e[0m";
+	echo -e ": Installing prerequisite packages --------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
 	echo -e "\\e[36mPHASE 1: Installing Docker ---------------------------------- COMPLETE\\e[0m";
