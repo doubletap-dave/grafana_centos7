@@ -1,377 +1,280 @@
 #!/bin/bash
 
-# This script will install Docker, Grafana, InfluxDB and Graphite. It will also add systemd service files to ensure auto startup each boot.
-# This script was inspired by reddit users /u/tyler_hammer and /u/dencur. This is a combination of several guides and scripts (with edits) to make it as easy as possible to get Grafana up and running.
-# Please note this script is intented to be run on a VM, however it should work on a physical machine as well.
+#### File: functions.sh
+#### Version: 1.5a
+#### Description: Functions needed in order to install Docker, Grafana, InfluxDB and Graphite
+#### Author: Dave (/u/topiaryx) - topiaryx@gmail.com - 28 August 2017 - Utah
 
-# DCGi Version 0.1
+#### Load helper scripts
+load_helpers() {
+  source $(dirname "$0")/strings.sh
+}
+load_helpers
 
-###
-### FUNCTIONS
-###
-
-# Function that checks if the user is root or has root permissions.
-root_checker () {
-	if [[ $EUID != 0 ]]; then
-		echo -e "Error: This setup script requires root permissions. Please run the script as root." > /dev/null 2>&1 >> dgc_install.log;
-		exit 1;
-	fi
+#### PREREQ: Check machine or VM IP address
+check_ip() {
+	ip=$(ip route get 1 | awk '{print $NF;exit}');
 }
 
-root_checker
-
-# Check maching IP address
-ip_checker () {
-	machine_ip=$(ip route get 1 | awk '{print $NF;exit}');
+#### PREREQ: Package installer
+prereq_installer() {
+  yum install -y epel-release && yum update -y
+  yum install -y dnf && dnf install -y yum-utils device-mapper-persistent-data lvm2 
+  dnf install -y sshpass net-snmp net-snmp-devel.x86_64 net-snmp-utils.x86_64
 }
 
+#### DOCKER: Remove old installations
+remove_docker() {
+  dnf remove -y docker docker-ce docker-common docker-selinux docker-engine
+}
+
+#### DOCKER: Add repo
+add_docker_repo() {
+  yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+}
+
+#### DOCKER: Install
+docker_install() {
+  dnf makecache && dnf install -y docker-ce
+}
+
+#### DOCKER: Run and enable
+docker_run() {
+  systemctl start docker && systemctl enable docker
+}
+
+#### DOCKER: Verify
+docker_verify() {
+  docker run hello-world
+  docker ps -a | grep -i "hello-world" | gawk '{print $1}' | xargs docker rm;
+  docker rmi -f hello-world
+}
+
+#### GRAFANA: Request admin password
+grafana_get_admin_pw() {
+  echo -e "Please enter an admin password for Grafana"
+  read -p ">>> " -s g_adminpw
+  echo -e "\n\n"
+  
+  echo -e "Please re-enter the password"
+  read -p ">>> " -s g_adminpw_2
+  echo -e "\n\n"
+  
+  while [["$g_adminpw" != "$g_adminpw_2" ]];
+    do
+      echo
+      echo -e "Passwords do not match, please try again!"
+      echo
+      
+      echo -e "Please enter an admin password for Grafana"
+      read -p ">>> " -s g_adminpw
+      echo -e "\n\n"
+  
+      echo -e "Please re-enter the password"
+      read -p ">>> " -s g_adminpw_2
+      echo -e "\n\n"
+  done
+}
+
+#### GRAFANA: Create persistent storage
+grafana_create_persistent_storage() {
+  docker run -d -v /var/lib/grafana --name grafana-storage busybox:latest > /dev/null 2>&1 >> \
+  dgc_install.log
+}
+
+#### GRAFANA: Create container
+grafana_create_container() {
+  docker create --name=grafana --restart always -p 3000:3000 --volumes-from grafana-storage -e \
+	"GF_SECURITY_ADMIN_PASSWORD=${GADMINPW}" grafana/grafana > /dev/null 2>&1 >> dgc_install.log
+}
+
+#### GRAFANA: Start
+grafana_start() {
+  docker start grafana  > /dev/null 2>&1 >> dgc_install.log
+}
+
+#### INFLUXDB: Create persistent storage
+influxdb_create_persistent_storage() {
+  mkdir -p /docker/containers/influxdb/conf/ > /dev/null 2>&1 >> dgc_install.log
+  mkdir -p /docker/containers/influxdb/db/ > /dev/null 2>&1 >> dgc_install.log
+}
+
+#### INFLUXDB: Generate default configuration
+influxdb_generate_default_config() {
+  docker run --rm influxdb influxd config > /docker/containers/influxdb/conf/influxdb.conf 2 \
+  > /dev/null 2>&1 >> dgc_install.log
+}
+
+#### INFLUXDB: Create container
+influxdb_create_container() {
+  docker create --name influxdb --restart always -e PUID=1000 -e PGID=1000 -p 8083:8083 -p 8086:8086 \
+    -v /docker/containers/influxdb/conf/influxdb.conf:/etc/influxdb/influxdb.conf:ro \
+		-v /docker/containers/influxdb/db:/var/lib/influxdb influxdb -config /etc/influxdb/influxdb.conf \
+    > /dev/null 2>&1 >> dgc_install.log;
+}
+
+#### INFLUXDB: Start
+influxdb_start() {
+  docker start influxdb > /dev/null 2>&1 >> dgc_install.log;
+}
+
+#### GRAPHITE: Create container
+graphite_create_container() {
+  docker run -d --name graphite --restart always -p 80:80 -p 2003-2004:2003-2004 -p 2023-2024:2023-2024 \
+ 	-p 8125:8125/udp -p 8126:8126 hopsoft/graphite-statsd > /dev/null 2>&1 >> dgc_install.log;
+}
+
+#### POST: Add Docker to sudoers
+docker_sudo() {
+  usermod -aG docker $(logname) > /dev/null 2>&1 >> dgc_install.log;
+}
+
+#### POST: Check ownership
 check_ownership () {
-	
 	chown ${USER:=$(/usr/bin/id -run)}:${USER} -R /docker > /dev/null 2>&1 >> dgc_install.log;
-	echo -e "\r\033[K\\e[36mVerifying ownership ----- Complete\\e[0m"
 }
 
-# Prerequisite package installer
-prereq_installer () {
-	yum install -y epel-release && yum update -y ;
-	yum install -y yum-utils evice-mapper-persistent-data lvm2 sshpass net-snmp net-snmp-devel.x86_64 net-snmp-utils.x86_64;
-	clear;
+#### POST: Reboot
+restart_me() {
+  clear && p-all_complete
+  echo
+  echo -e "The machines needs to be restarted in order to apply changes and finalize the installation."
+  echo -e "After the restart, Grafana can be accessed via http://${machine_ip}:3000 with the user 'admin' and the password you created earlier in the installation."
+  echo
+  echo -n "Press any key to restart..."
+  read -rsn1
+  reboot
+  
 }
 
-# Docker best practice, remove old Docker installations before installing an updated version
-remove_old_docker () {
-	yum remove -y docker docker-common docker-selinux docker-engine; 
-	clear;
+#### INSTALLATION
+
+prereq_noupdate() {
+  pre1b
+  prereq_installer
+  clear
 }
 
-# Add Docker repository
-add_docker_repo () {
-	yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo;
-	clear;
+prereq_update() {
+  pre1a
+  pre1b
+  prereq_installer && dnf upgrade -y
+  clear
 }
 
-# Docker Install, run and test
-docker_installer () {
-	yum makecache fast && yum install -y docker-ce;
-	systemctl start docker;
-	systemctl enable docker;
-	clear;
-}
-
-# Verify Docker is working
-verify_docker () {
-	docker run hello-world;
-	docker ps -a | grep -i "hello-world" | gawk '{print $1}' | xargs docker rm;
-	docker rmi -f hello-world;
-	clear;
-}
-
-get_grafana_admin_pw() {
-	echo -e "\\e[7mPlease specify an admin password for Grafana\\e[0m";
-	read -p "> " -s GADMINPW;
-	echo
-	echo
-	
-	echo -e "\\e[7mPlease re-enter the password\\e[0m";
-	read -p "> " -s GADMINPW2;
-	echo
-	echo
-
-	while [ "${GADMINPW}" != "${GADMINPW2}" ];
-		do
- 			echo
- 			echo -e "\\e[41mPasswords do not match, please try again!\\e[0m";
- 			echo
- 			
- 			echo -e "\\e[7mPlease specify an admin password for Grafana\\e[0m";
- 			read -p "> " -s GADMINPW;
-			echo
- 			echo
- 			
- 			echo -e "\\e[7mPlease re-enter the password\\e[0m";
-            read -p "> " -s GADMINPW2;
- 			echo
- 			echo
-	done
-}
-
-create_grafana_persistent_storage () {
-	docker run -d -v /var/lib/grafana --name grafana-storage busybox:latest > /dev/null 2>&1 >> dgc_install.log;
-}
-
-create_grafana_container () {
-	docker create --name=grafana --restart always -p 3000:3000 --volumes-from grafana-storage -e \
-	"GF_SECURITY_ADMIN_PASSWORD=${GADMINPW}" grafana/grafana > /dev/null 2>&1 >> dgc_install.log;
-}
-
-start_grafana () {
-	docker start grafana > /dev/null 2>&1 >> dgc_install.log;
-}
-
-make_update_script_folder () {
-	mkdir ~/updates > /dev/null 2>&1 >> dgc_install.log;
-}
-
-download_grafana_update_scripts () {
-	wget https://raw.githubusercontent.com/topiaryx/grafana/master/Update%20Scripts/grafanaupdate.sh -O ~/updates/updategrafana.sh > /dev/null 2>&1 >> dgc_install.log;
-}
-
-create_influxdb_persistent_storage () {
-	mkdir -p /docker/containers/influxdb/conf/ > /dev/null 2>&1 >> dgc_install.log;
-	mkdir -p /docker/containers/influxdb/db/ > /dev/null 2>&1 >> dgc_install.log;
-}
-
-influxdb_generate_default_config () {
-	docker run --rm influxdb influxd config > /docker/containers/influxdb/conf/influxdb.conf 2>>install.log
-}
-
-create_influxdb_container () {
-	docker create --name influxdb --restart always \
-		-e PUID=1000 -e PGID=1000 \
-		-p 8083:8083 -p 8086:8086 \
-		-v /docker/containers/influxdb/conf/influxdb.conf:/etc/influxdb/influxdb.conf:ro \
-		-v /docker/containers/influxdb/db:/var/lib/influxdb \
-		influxdb -config /etc/influxdb/influxdb.conf > /dev/null 2>&1 >> dgc_install.log;
-}
-
-start_influxdb () {
-	docker start influxdb > /dev/null 2>&1 >> dgc_install.log;
-}
-
-download_influxdb_update_script () {
-	wget https://raw.githubusercontent.com/topiaryx/grafana/master/Update%20Scripts/influxdbupdate.sh -O ~/updates/influxupdate.sh > /dev/null 2>&1 >> dgc_install.log;
-}
-
-create_gaphite_container () {
-	docker run -d \
-	--name graphite \
-	--restart always \
-	-p 80:80 \
- 	-p 2003-2004:2003-2004 \
- 	-p 2023-2024:2023-2024 \
- 	-p 8125:8125/udp \
- 	-p 8126:8126 \
- 	hopsoft/graphite-statsd > /dev/null 2>&1 >> dgc_install.log;
-}
-
-docker_group_add () {
-	# Remove the need to user Sudo before docker. This generally requires you to log out and log back in, which is why we restart at the end of the script.
-	usermod -aG docker $(logname) > /dev/null 2>&1 >> dgc_install.log;
-}
-
-# Install Docker!
-install_docker () {
-	# FIRE THE LAZAAAAAAAAA
-	clear;
-	echo -e "\\e[36mPHASE 1: Installing prerequisite packages";
-	prereq_installer > /dev/null 2>&1 >> dgc_install.log;
-	clear; 
-
-	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present)"
-	remove_old_docker > /dev/null 2>&1 >> dgc_install.log;
-	clear; 
-
-	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Adding Docker Repository"
-	add_docker_repo > /dev/null 2>&1 >> dgc_install.log;
-	clear; 
-
-	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Installing Docker"
-	docker_installer > /dev/null 2>&1 >> dgc_install.log;
-	clear; 
-
-	echo -e "\\e[36mPHASE 1: Installing prerequisite packages --------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Installing Docker ---------------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Verifying Docker"
-	verify_docker > /dev/null 2>&1 >> dgc_install.log;
-	clear; 
-
-	echo -e ": Installing prerequisite packages --------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Removing old docker installations (if present) ----- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Adding Docker Repository --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Installing Docker ---------------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: Verifying Docker ----------------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
+install_docker() {
+  p1a
+  remove_docker
+  clear
+  
+  p1a_c
+  p1b
+  add_docker_repo
+  clear
+  
+  p1a_c
+  p1b_c
+  p1c
+  docker_install
+  clear
+  
+  p1a_c
+  p1b_c
+  p1c_c
+  p1d
+  docker_run
+  clear
+  
+  p1a_c
+  p1b_c
+  p1c_c
+  p1d_c
+  p1e
+  docker_verify
+  clear
+  
+  docker_sudo
 }
 
 install_grafana() {
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana\\e[0m";
-	create_grafana_persistent_storage;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -ne "\\e[36mPHASE 2: Checking ownership\\e[0m";
-	check_ownership;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Creating Grafana docker container\\e[0m";
-	create_grafana_container;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Creating Grafana docker container ------------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Starting Grafana\\e[0m";
-	start_grafana;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Creating Grafana docker container ------------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Starting Grafana ----------------------------- COMPLETE\\e[0m";	
-	echo -e "\\e[36mPHASE 2: Creating Update Folder\\e[0m";
-	make_update_script_folder;
-	clear;
-	
-	echo -e "\\e[36mPHASE 1: COMPLETE"
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Creating Grafana docker container ------------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Starting Grafana ----------------------------- COMPLETE\\e[0m";	
-	echo -e "\\e[36mPHASE 2: Creating Update Folder ----------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Downloading Grafana update script\\e[0m";
-	download_grafana_update_scripts;
-	clear;
-	
-	echo -e "\\e[36mPHASE 1: COMPLETE"
-	echo
-	echo -e "\\e[36mPHASE 2: Creating persistent storage for Grafana ------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Creating Grafana docker container ------------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Starting Grafana ----------------------------- COMPLETE\\e[0m";	
-	echo -e "\\e[36mPHASE 2: Creating Update Folder ----------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Downloading Grafana update script ------------ COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE"
+  p1_complete
+  p2a
+  grafana_get_admin_pw
+  clear
+  
+  p1_complete
+  p2a_c
+  p2b
+  grafana_create_persistent_storage
+  clear
+  
+  p1_complete
+  p2a_c
+  p2b_c
+  p2c
+  grafana_create_container
+  clear
+  
+  p1_complete
+  p2a_c
+  p2b_c
+  p2c_c
+  grafana_start
+  clear
 }
 
-install_influxdb () {
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container\\e[0m";
-	create_influxdb_persistent_storage;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership"
-	check_ownership;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Generating default InfluxDB configuration";
-	influxdb_generate_default_config;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Generating default InfluxDB configuration ---- COMPLETE\\e[0m";
-	create_influxdb_container;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "PHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Generating default InfluxDB configuration ---- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Starting InfluxDB";
-	start_influxdb;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Generating default InfluxDB configuration ---- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Starting InfluxDB ---------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: Downloading Grafana update script\\e[0m";
-	download_influxdb_update_script;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 3: Creating InfluxDB docker container ----------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Checking ownership --------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Generating default InfluxDB configuration ---- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Starting InfluxDB ---------------------------- COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: Downloading Grafana update script ------------ COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: COMPLETE\\e[0m";
+install_influxdb() {
+  p1-p2_complete
+  p3a
+  influxdb_create_persistent_storage
+  clear
+  
+  p1-p2_complete
+  p3a_c
+  p3b
+  influxdb_generate_default_config
+  clear
+  
+  p1-p2_complete
+  p3a_c
+  p3b_c
+  p3c
+  influxdb_create_container
+  clear
+  
+  p1-p2_complete
+  p3a_c
+  p3b_c
+  p3c_c
+  p3d
+  influxdb_start
+  clear
 }
 
-install_graphite () {
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: COMPLETE\\e[0m";
-	echo
-	echo -e "\\e[36mPHASE 4: Creating Graphite docker container";
-	create_gaphite_container;
-	clear;
-
-	echo -e "\\e[36mPHASE 1: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 2: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 3: COMPLETE\\e[0m";
-	echo -e "\\e[36mPHASE 4: COMPLETE\\e[0m";
+install_graphite() {
+  p1-p3_complete
+  p4a
+  graphite_create_container
+  clear
+  p-all_complete
 }
 
-###
-### EXECUTE
-###
+install_noupdate() {
+  prereq_noupdate
+  install_docker
+  install_grafana
+  install_influxdb
+  install_graphite
+  check_ownership
+  restart_me
+}
 
-clear;
-
-while true; do
-    echo -n -e "\\e[7mDo you want to update your system? [y/n]:\\e[0m ";
-    read onsey;
-    case $onsey in
-        [yY] ) 
-			echo -e "Updating system!" && yum update -y && yum upgrade -y && install_docker && install_grafana && install_influxdb && install_graphite && docker_group_add && ip_checker; break;; # Update, upgrade and install
-        [nN] ) 
-			echo -e "\\e[36mSkipping Updates\\e[0m"; install_docker && install_grafana && install_influxdb && install_graphite && docker_group_add && ip_checker; break;; # Skip updates and install
-        * ) 
-        	echo -e "\\e[7mPlease answer 'y' or 'n'\\e[0m ";; # Error handling to get the right answer
-    esac
-done
-
-# Restart announcement
-echo
-echo -e "\\e[7mThe VM needs to be restarted in order to apply changes and finalize the installation.\\e[0m";
-echo -e "\\e[7mAfter the restart, Grafana can be accessed via http://${machine_ip}:3000 with the user 'admin' and the password you created earlier in the installation.\\e[0m";
-echo
-echo -n "Press any key to restart...";
-read -rsn1;
-
-# Restart
-reboot;
+install_update() {
+  prereq_update
+  install_docker
+  install_grafana
+  install_influxdb
+  install_graphite
+  check_ownership
+  restart_me
+}
