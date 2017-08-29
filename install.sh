@@ -17,8 +17,8 @@ root_check
 
 #### Get helper scripts
 get_helpers() {
-  wget link_to_functions && chmod +x fumctions
-  wget link_to_strings && chmod +x strings
+  wget https://raw.githubusercontent.com/topiaryx/grafana_centos7/master/functions.sh && chmod +x functions
+  wget https://raw.githubusercontent.com/topiaryx/grafana_centos7/master/strings.sh && chmod +x strings
 }
 get_helpers
 
@@ -28,3 +28,17 @@ load_helpers() {
 }
 load_helpers
 
+#### Execute
+clear
+
+while true; do
+    echo -e "Welcome to the Docker/Grafana/InfluxDB and Graphite Install-o-matic 9000!"
+    echo
+    echo -e "Do you want to update your system? [y/n]: "
+    read onsey
+    case $onsey in
+        [yY] ) install_update; break;; 
+        [nN] ) install_noupdate; break;;
+           * ) echo -e "Please answer 'y' or 'n' ";;
+    esac
+done
